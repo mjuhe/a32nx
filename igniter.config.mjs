@@ -3,6 +3,7 @@ import { ExecTask, TaskOfTasks } from '@flybywiresim/igniter';
 export default new TaskOfTasks('a32nx', [
     new TaskOfTasks('build', [
         new ExecTask('instruments','npm run build:instruments', ['src/instruments', 'A32NX/html_ui/Pages/VCockpit/Instruments/generated']),
+        new ExecTask('fmgc','npm run build:fmgc', ['src/fmgc', 'A32NX/html_ui/JS/fmgc']),
         new ExecTask('behavior','node src/behavior/build.js', ['src/behavior', 'A32NX/ModelBehaviorDefs/A32NX/generated']),
         new ExecTask('model','node src/model/build.js', ['src/model', 'A32NX/SimObjects/AirPlanes/Asobo_A320_NEO/model']),
         new ExecTask('systems', [
