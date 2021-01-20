@@ -1671,17 +1671,31 @@ class FMCMainDisplay extends BaseAirliners {
         });
     }
 
-    insertWaypoint(newWaypointTo, index, callback = EmptyCallback.Boolean) {
-        this.ensureCurrentFlightPlanIsTemporary(async () => {
-            this.getOrSelectWaypointByIdent(newWaypointTo, (waypoint) => {
-                if (!waypoint) {
-                    this.addNewMessage(NXSystemMessages.notInDatabase);
+    insertWaypoint(newWaypointTo, index, callback = EmptyCallback.Boolean, immediately) {
+        if (newWaypointTo === "" || newWaypointTo === FMCMainDisplay.clrValue) {
+            return callback(false);
+        }
+        this.getOrSelectWaypointByIdent(newWaypointTo, (waypoint) => {
+            if (!waypoint) {
+                this.addNewMessage(NXSystemMessages.notInDatabase);
+                return callback(false);
+            }
+            if (immediately) {
+                if (this.flightPlanManager.isCurrentFlightPlanTemporary()) {
+                    this.addNewMessage(NXSystemMessages.notAllowed);
                     return callback(false);
                 }
                 this.flightPlanManager.addWaypoint(waypoint.icao, index, () => {
                     return callback(true);
                 });
-            });
+            }
+            else {
+                this.ensureCurrentFlightPlanIsTemporary(async () => {
+                    this.flightPlanManager.addWaypoint(waypoint.icao, index, () => {
+                        return callback(true);
+                    });
+                });
+            }
         });
     }
 
@@ -1777,9 +1791,51 @@ class FMCMainDisplay extends BaseAirliners {
         }
     }
 
-    removeWaypoint(index, callback = EmptyCallback.Void) {
-        this.ensureCurrentFlightPlanIsTemporary(() => {
+    removeWaypoint(index, callback = EmptyCallback.Void, immediately = false) {
+        if (immediately) {
+            if (this.flightPlanManager.isCurrentFlightPlanTemporary()) {
+                this.addNewMessage(NXSystemMessages.notAllowed);
+                return callback(false);
+            }
             this.flightPlanManager.removeWaypoint(index, true, callback);
+        } else {
+            this.ensureCurrentFlightPlanIsTemporary(() => {
+                this.flightPlanManager.removeWaypoint(index, true, callback);
+            });
+        }
+    }
+
+    clearDiscontinuity(index, callback = EmptyCallback.Void, immediately = false) {
+        if (immediately) {
+            if (this.flightPlanManager.isCurrentFlightPlanTemporary()) {
+                this.addNewMessage(NXSystemMessages.notAllowed);
+                return callback(false);
+            }
+            this.flightPlanManager.clearDiscontinuity(index);
+            callback();
+        } else {
+            this.ensureCurrentFlightPlanIsTemporary(() => {
+                this.flightPlanManager.clearDiscontinuity(index);
+                callback();
+            });
+        }
+    }
+
+    setDestinationAfterWaypoint(icao, index, callback = EmptyCallback.Boolean) {
+        this.dataManager.GetAirportByIdent(icao).then((airportTo) => {
+            if (airportTo) {
+                this.ensureCurrentFlightPlanIsTemporary(() => {
+                    this.flightPlanManager.truncateWaypoints(index);
+                    // add the new destination, which will insert a discontinuity
+                    this.flightPlanManager.setDestination(airportTo.icao, () => {
+                        this.tmpOrigin = airportTo.ident;
+                        callback(true);
+                    });
+                });
+            } else {
+                this.addNewMessage(NXSystemMessages.notInDatabase);
+                callback(false);
+            }
         });
     }
 
