@@ -115,6 +115,10 @@ pub trait Cabin {
     fn pressure(&self) -> Pressure;
 }
 
+pub trait CabinTemperature {
+    fn cabin_temperature(&self) -> ThermodynamicTemperature;
+}
+
 pub trait PressurizationOverheadShared {
     fn is_in_man_mode(&self) -> bool;
     fn ditching_is_on(&self) -> bool;
