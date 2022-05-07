@@ -164,19 +164,24 @@ impl CabinPressureSimulation {
         let pressure_ratio = (self.exterior_pressure / self.cabin_pressure).get::<ratio>();
 
         // Empirical smooth formula to avoid singularity at at delta P = 0
-        let mut margin: f64 = -1.205e-4 * self.exterior_pressure.get::<hectopascal>() + 0.124108;
+        let mut margin: f64 = -1.205e-4
+            * (self.cabin_volume.get::<cubic_meter>() / 400.)
+            * self.exterior_pressure.get::<hectopascal>()
+            + 0.124108 * (self.cabin_volume.get::<cubic_meter>() / 400.);
         let slope: f64 = -5000. * margin + 510.;
         if should_open_outflow_valve {
             margin = 0.1;
             if (pressure_ratio - 1.).abs() < margin {
-                -5e2 * pressure_ratio + 5e2
+                -5e2 * (self.cabin_volume.get::<cubic_meter>() / 400.) * pressure_ratio
+                    + 5e2 * (self.cabin_volume.get::<cubic_meter>() / 400.)
             } else if (pressure_ratio - 1.) > 0. {
-                -50.
+                -50. * (self.cabin_volume.get::<cubic_meter>() / 400.)
             } else {
-                50.
+                50. * (self.cabin_volume.get::<cubic_meter>() / 400.)
             }
         } else if (pressure_ratio - 1.).abs() < margin {
-            -slope * pressure_ratio + slope
+            -slope * pressure_ratio * (self.cabin_volume.get::<cubic_meter>() / 400.)
+                + slope * (self.cabin_volume.get::<cubic_meter>() / 400.)
         } else if (pressure_ratio - 1.) > 0. {
             -1.
         } else {
@@ -227,7 +232,7 @@ impl CabinPressureSimulation {
         .sqrt()
     }
 
-    pub(super) fn cabin_vs(&self) -> Velocity {
+    pub fn cabin_vs(&self) -> Velocity {
         self.cabin_vs
     }
 

@@ -250,8 +250,6 @@ impl CabinPressureController {
     }
 
     fn calculate_cabin_altitude(&self) -> Length {
-        let p = self.cabin_pressure;
-
         // Based on local QNH when below 5000ft from departure or arrival airport, ISA when above
         let p_0 = if matches!(
             self.pressure_schedule_manager,
@@ -279,7 +277,7 @@ impl CabinPressureController {
             Pressure::new::<hectopascal>(1013.25)
         };
 
-        let pressure_ratio = (p / p_0).get::<ratio>();
+        let pressure_ratio = (self.cabin_pressure / p_0).get::<ratio>();
 
         // Hydrostatic equation with linear temp changes and constant R, g
         let altitude: f64 = ((CabinPressureController::T_0
@@ -296,7 +294,7 @@ impl CabinPressureController {
         self.cabin_pressure - self.exterior_pressure
     }
 
-    pub(super) fn cabin_altitude(&self) -> Length {
+    pub fn cabin_altitude(&self) -> Length {
         self.cabin_alt
     }
 
@@ -317,6 +315,7 @@ impl CabinPressureController {
     }
 
     pub fn reset_cpc_switch(&mut self) {
+        self.manual_to_auto_switch = false;
         if let Some(manager) = self.pressure_schedule_manager.as_mut() {
             manager.reset_cpc_switch();
         }
@@ -344,6 +343,10 @@ impl CabinPressureController {
         self.cabin_delta_p() < Pressure::new::<psi>(1.45)
             && self.cabin_alt > (self.landing_elev + Length::new::<foot>(1500.))
             && self.exterior_vertical_speed < Velocity::new::<foot_per_minute>(-500.)
+    }
+
+    pub fn landing_elevation(&self) -> Length {
+        self.landing_elevation
     }
 }
 
@@ -576,6 +579,7 @@ impl Ground {
 
 impl PressureSchedule<Ground> {
     const OUTFLOW_VALVE_OPENS_AFTER_SECS: u64 = 55;
+    const CPC_SWITCHES_AFTER_SECS: u64 = 70;
 
     fn with_open_outflow_valve() -> Self {
         Self {
@@ -613,7 +617,8 @@ impl PressureSchedule<Ground> {
     }
 
     fn should_switch_cpc(self: PressureSchedule<Ground>) -> bool {
-        self.timer > Duration::from_secs(70) && self.pressure_schedule.cpc_switch_reset
+        self.timer > Duration::from_secs(Self::CPC_SWITCHES_AFTER_SECS)
+            && self.pressure_schedule.cpc_switch_reset
     }
 
     fn reset_cpc_switch(&mut self) {
