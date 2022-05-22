@@ -1002,6 +1002,10 @@ mod tests {
         fn is_mode_sel_pb_auto(&mut self) -> bool {
             self.read_by_name("OVHD_PRESS_MODE_SEL_PB_IS_AUTO")
         }
+
+        fn cabin_measured_temperature(&mut self) -> ThermodynamicTemperature {
+            self.read_by_name("COND_FWD_TEMP")
+        }
     }
     impl TestBed for CabinAirTestBed {
         type Aircraft = TestAircraft;
@@ -1042,6 +1046,7 @@ mod tests {
             .on_ground()
             .run_and()
             .command_packs_on_off(false)
+            .iterate(20)
             .ambient_pressure_of(Pressure::new::<hectopascal>(696.86)) // Equivalent to 10,000ft from tables
             .iterate(200);
 
@@ -1337,7 +1342,7 @@ mod tests {
 
     #[test]
     fn aircraft_vs_starts_at_0() {
-        let test_bed = test_bed().on_ground().iterate(20);
+        let test_bed = test_bed().on_ground().iterate(500);
 
         assert!((test_bed.cabin_vs()).abs() < Velocity::new::<foot_per_minute>(1.));
     }
@@ -1379,7 +1384,7 @@ mod tests {
             .on_ground()
             .iterate(20)
             .set_takeoff_power()
-            .iterate(20);
+            .iterate(100);
 
         assert!(
             (test_bed.cabin_delta_p() - Pressure::new::<psi>(0.1)).abs()
@@ -1677,5 +1682,85 @@ mod tests {
             test_bed.safety_valve_open_amount(),
             Ratio::new::<percent>(0.)
         );
+    }
+
+    #[test]
+    fn increasing_cabin_temperature_increases_pressure() {
+        let mut test_bed = test_bed()
+            .command_mode_sel_pb_man()
+            .and_run()
+            .command_man_vs_switch_position(2)
+            .command_packs_on_off(false)
+            .iterate(100)
+            .memorize_cabin_pressure();
+
+        assert!(
+            (test_bed.cabin_pressure() - Pressure::new::<hectopascal>(1013.)).abs()
+                < Pressure::new::<hectopascal>(10.)
+        );
+        assert!(
+            (test_bed
+                .cabin_measured_temperature()
+                .get::<degree_celsius>()
+                - 24.)
+                .abs()
+                < 1.
+        );
+
+        test_bed.set_ambient_temperature(ThermodynamicTemperature::new::<degree_celsius>(40.));
+
+        test_bed = test_bed
+            .iterate_with_delta(200, Duration::from_secs(60))
+            .iterate(10);
+
+        assert!(
+            (test_bed
+                .cabin_measured_temperature()
+                .get::<degree_celsius>()
+                - 40.)
+                .abs()
+                < 1.
+        );
+        assert!(test_bed.cabin_pressure() > test_bed.initial_pressure());
+    }
+
+    #[test]
+    fn reducing_cabin_temperature_reduces_pressure() {
+        let mut test_bed = test_bed()
+            .command_mode_sel_pb_man()
+            .and_run()
+            .command_man_vs_switch_position(2)
+            .command_packs_on_off(false)
+            .iterate(100)
+            .memorize_cabin_pressure();
+
+        assert!(
+            (test_bed.cabin_pressure() - Pressure::new::<hectopascal>(1013.)).abs()
+                < Pressure::new::<hectopascal>(10.)
+        );
+        assert!(
+            (test_bed
+                .cabin_measured_temperature()
+                .get::<degree_celsius>()
+                - 24.)
+                .abs()
+                < 1.
+        );
+
+        test_bed.set_ambient_temperature(ThermodynamicTemperature::new::<degree_celsius>(0.));
+
+        test_bed = test_bed
+            .iterate_with_delta(200, Duration::from_secs(60))
+            .iterate(10);
+
+        assert!(
+            (test_bed
+                .cabin_measured_temperature()
+                .get::<degree_celsius>()
+                - 0.)
+                .abs()
+                < 1.
+        );
+        assert!(test_bed.cabin_pressure() < test_bed.initial_pressure());
     }
 }

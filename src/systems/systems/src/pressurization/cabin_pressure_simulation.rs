@@ -38,6 +38,7 @@ pub struct CabinPressureSimulation {
     cabin_vs: Velocity,
     cabin_pressure: Pressure,
     cabin_air_density: MassDensity,
+    cabin_previous_temperature: ThermodynamicTemperature,
 
     //Aircraft dependant constants
     cabin_volume: Volume,
@@ -79,6 +80,7 @@ impl CabinPressureSimulation {
             cabin_vs: Velocity::new::<meter_per_second>(0.),
             cabin_pressure: Pressure::new::<hectopascal>(1013.25),
             cabin_air_density: MassDensity::new::<kilogram_per_cubic_meter>(1.225),
+            cabin_previous_temperature: ThermodynamicTemperature::new::<kelvin>(297.15),
 
             cabin_volume,
             cabin_leakage_area,
@@ -114,7 +116,8 @@ impl CabinPressureSimulation {
         self.cabin_flow_in = pack_flow.pack_flow();
         self.cabin_flow_out = self.calculate_cabin_flow_out();
         self.cabin_vs = self.calculate_cabin_vs(cabin_temperature);
-        self.cabin_pressure = self.calculate_cabin_pressure(context);
+        self.cabin_pressure = self.calculate_cabin_pressure(context, cabin_temperature);
+        self.cabin_previous_temperature = cabin_temperature.cabin_temperature();
     }
 
     fn initialize_cabin_pressure(
@@ -213,14 +216,25 @@ impl CabinPressureSimulation {
         Velocity::new::<meter_per_second>(vertical_speed)
     }
 
-    fn calculate_cabin_pressure(&self, context: &UpdateContext) -> Pressure {
+    fn calculate_cabin_pressure(
+        &self,
+        context: &UpdateContext,
+        cabin_temperature: &impl CabinTemperature,
+    ) -> Pressure {
         // Convert cabin V/S to pressure/delta
+        let pressure_difference_temperature = Pressure::new::<pascal>(
+            self.cabin_air_density.get::<kilogram_per_cubic_meter>()
+                * Self::R
+                * (cabin_temperature.cabin_temperature().get::<kelvin>()
+                    - self.cabin_previous_temperature.get::<kelvin>()),
+        );
         self.cabin_pressure
             * (1.
                 - 2.25577e-5_f64
                     * self.cabin_vs.get::<meter_per_second>()
                     * context.delta_as_secs_f64())
             .powf(5.2559)
+            + pressure_difference_temperature
     }
 
     fn base_airflow_calculation(&self) -> f64 {
