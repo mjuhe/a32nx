@@ -1,12 +1,12 @@
 use crate::{
     air_conditioning::PackFlow,
-    shared::{AverageExt, CabinTemperature},
+    shared::{AverageExt, CabinPressurization},
     simulation::{
         InitContext, SimulationElement, SimulatorWriter, UpdateContext, VariableIdentifier, Write,
     },
 };
 
-use super::CabinPressure;
+use super::{CabinFlowProperties, CabinPressure};
 
 use uom::si::{
     area::square_meter,
@@ -92,12 +92,10 @@ impl CabinPressureSimulation {
     pub fn update(
         &mut self,
         context: &UpdateContext,
-        outflow_valve_open_amount: Ratio,
-        safety_valve_open_amount: Ratio,
+        pressurization: &impl CabinPressurization,
         pack_flow: &impl PackFlow,
         lgciu_gear_compressed: bool,
-        should_open_outflow_valve: bool,
-        cabin_temperature: &impl CabinTemperature,
+        cabin_temperature: ThermodynamicTemperature,
     ) {
         if !self.initialized {
             self.cabin_pressure = self.initialize_cabin_pressure(context, lgciu_gear_compressed);
@@ -105,19 +103,19 @@ impl CabinPressureSimulation {
         }
         self.cabin_air_density = MassDensity::new::<kilogram_per_cubic_meter>(
             self.cabin_pressure.get::<pascal>()
-                / (CabinPressureSimulation::R
-                    * cabin_temperature.cabin_temperature().get::<kelvin>()),
+                / (CabinPressureSimulation::R * cabin_temperature.get::<kelvin>()),
         );
         self.exterior_pressure = self.exterior_pressure_low_pass_filter(context);
         self.z_coefficient = self.calculate_z();
-        self.flow_coefficient = self.calculate_flow_coefficient(should_open_outflow_valve);
-        self.outflow_valve_open_amount = outflow_valve_open_amount;
-        self.safety_valve_open_amount = safety_valve_open_amount;
+        self.flow_coefficient =
+            self.calculate_flow_coefficient(pressurization.should_open_outflow_valve());
+        self.outflow_valve_open_amount = pressurization.outflow_valve_open_amount();
+        self.safety_valve_open_amount = pressurization.safety_valve_open_amount();
         self.cabin_flow_in = pack_flow.pack_flow();
         self.cabin_flow_out = self.calculate_cabin_flow_out();
         self.cabin_vs = self.calculate_cabin_vs(cabin_temperature);
         self.cabin_pressure = self.calculate_cabin_pressure(context, cabin_temperature);
-        self.cabin_previous_temperature = cabin_temperature.cabin_temperature();
+        self.cabin_previous_temperature = cabin_temperature;
     }
 
     fn initialize_cabin_pressure(
@@ -195,37 +193,35 @@ impl CabinPressureSimulation {
     fn calculate_cabin_flow_out(&self) -> MassRate {
         let area_leakage = self.cabin_leakage_area
             + self.safety_valve_size * self.safety_valve_open_amount.get::<ratio>();
+        let outflow_valve_area =
+            self.outflow_valve_open_amount.get::<ratio>() * self.outflow_valve_size;
         MassRate::new::<kilogram_per_second>(
             self.flow_coefficient
-                * area_leakage.get::<square_meter>()
+                * (area_leakage.get::<square_meter>() + outflow_valve_area.get::<square_meter>())
                 * self.base_airflow_calculation(),
         )
     }
 
-    fn calculate_cabin_vs(&self, cabin_temperature: &impl CabinTemperature) -> Velocity {
-        let vertical_speed = (self.outflow_valve_open_amount.get::<ratio>()
-            * self.outflow_valve_size.get::<square_meter>()
-            * self.flow_coefficient
-            * self.base_airflow_calculation()
-            - self.cabin_flow_in.get::<kilogram_per_second>()
-            + self.cabin_flow_out.get::<kilogram_per_second>())
+    fn calculate_cabin_vs(&self, cabin_temperature: ThermodynamicTemperature) -> Velocity {
+        let vertical_speed = (self.cabin_flow_out.get::<kilogram_per_second>()
+            - self.cabin_flow_in.get::<kilogram_per_second>())
             / ((self.cabin_air_density.get::<kilogram_per_cubic_meter>()
                 * Self::G
                 * self.cabin_volume.get::<cubic_meter>())
-                / (Self::R * cabin_temperature.cabin_temperature().get::<kelvin>()));
+                / (Self::R * cabin_temperature.get::<kelvin>()));
         Velocity::new::<meter_per_second>(vertical_speed)
     }
 
     fn calculate_cabin_pressure(
         &self,
         context: &UpdateContext,
-        cabin_temperature: &impl CabinTemperature,
+        cabin_temperature: ThermodynamicTemperature,
     ) -> Pressure {
         // Convert cabin V/S to pressure/delta
         let pressure_difference_temperature = Pressure::new::<pascal>(
             self.cabin_air_density.get::<kilogram_per_cubic_meter>()
                 * Self::R
-                * (cabin_temperature.cabin_temperature().get::<kelvin>()
+                * (cabin_temperature.get::<kelvin>()
                     - self.cabin_previous_temperature.get::<kelvin>()),
         );
         self.cabin_pressure
@@ -253,18 +249,6 @@ impl CabinPressureSimulation {
     pub fn cabin_delta_p(&self) -> Pressure {
         self.cabin_pressure - self.exterior_pressure
     }
-
-    pub(super) fn z_coefficient(&self) -> f64 {
-        self.z_coefficient
-    }
-
-    pub(super) fn flow_coefficient(&self) -> f64 {
-        self.flow_coefficient
-    }
-
-    pub(super) fn cabin_flow_properties(&self) -> [MassRate; 2] {
-        [self.cabin_flow_in, self.cabin_flow_out]
-    }
 }
 
 impl CabinPressure for CabinPressureSimulation {
@@ -274,6 +258,27 @@ impl CabinPressure for CabinPressureSimulation {
 
     fn cabin_pressure(&self) -> Pressure {
         self.cabin_pressure
+    }
+}
+
+impl CabinFlowProperties for CabinPressureSimulation {
+    fn cabin_flow(&self) -> [MassRate; 2] {
+        let flow_out_minus_ofv = self.cabin_flow_out
+            - MassRate::new::<kilogram_per_second>(
+                self.outflow_valve_open_amount.get::<ratio>()
+                    * self.outflow_valve_size.get::<square_meter>()
+                    * self.flow_coefficient
+                    * self.base_airflow_calculation(),
+            );
+        [self.cabin_flow_in, flow_out_minus_ofv]
+    }
+
+    fn flow_coefficient(&self) -> f64 {
+        self.flow_coefficient
+    }
+
+    fn z_coefficient(&self) -> f64 {
+        self.z_coefficient
     }
 }
 

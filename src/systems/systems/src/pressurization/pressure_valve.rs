@@ -3,7 +3,7 @@ use crate::{
     simulation::UpdateContext,
 };
 
-use super::{CabinPressureSimulation, OutflowValveActuator};
+use super::{CabinFlowProperties, OutflowValveActuator};
 
 use std::time::Duration;
 use uom::si::{f64::*, ratio::percent};
@@ -83,10 +83,9 @@ impl PressureValve {
         &mut self,
         actuator: &T,
         press_overhead: &impl PressurizationOverheadShared,
-        cabin_pressure_simulation: &CabinPressureSimulation,
+        cabin_simulation: &impl CabinFlowProperties,
     ) {
-        self.target_open =
-            actuator.target_valve_position(press_overhead, cabin_pressure_simulation);
+        self.target_open = actuator.target_valve_position(press_overhead, cabin_simulation);
     }
 
     fn get_valve_change_for_delta(&self, context: &UpdateContext) -> f64 {
@@ -175,7 +174,7 @@ mod pressure_valve_tests {
         fn target_valve_position(
             &self,
             _: &impl PressurizationOverheadShared,
-            _: &CabinPressureSimulation,
+            _: &impl CabinFlowProperties,
         ) -> Ratio {
             self.target_valve_position
         }

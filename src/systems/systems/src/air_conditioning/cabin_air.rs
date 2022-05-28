@@ -1,6 +1,6 @@
 use super::{Air, DuctTemperature, ZoneType};
 use crate::{
-    shared::Cabin,
+    pressurization::CabinPressure,
     simulation::{
         InitContext, Read, SimulationElement, SimulatorReader, SimulatorWriter, UpdateContext,
         VariableIdentifier, Write,
@@ -13,7 +13,6 @@ use uom::si::{
     mass_rate::kilogram_per_second,
     power::{kilowatt, watt},
     pressure::pascal,
-    ratio::percent,
     thermodynamic_temperature::{degree_celsius, kelvin},
     velocity::meter_per_second,
     volume::cubic_meter,
@@ -21,22 +20,15 @@ use uom::si::{
 
 pub struct CabinZone<const ROWS: usize> {
     zone_identifier: VariableIdentifier,
-    fwd_door_id: VariableIdentifier,
-    rear_door_id: VariableIdentifier,
     passenger_rows_id: Option<Vec<VariableIdentifier>>,
 
     zone_id: ZoneType,
     zone_air: ZoneAir,
     zone_volume: Volume,
     passengers: u8,
-    fwd_door_is_open: bool,
-    rear_door_is_open: bool,
 }
 
 impl<const ROWS: usize> CabinZone<ROWS> {
-    const FWD_DOOR: &'static str = "INTERACTIVE POINT OPEN:0";
-    const REAR_DOOR: &'static str = "INTERACTIVE POINT OPEN:3";
-
     pub fn new(
         context: &mut InitContext,
         zone_id: ZoneType,
@@ -55,16 +47,12 @@ impl<const ROWS: usize> CabinZone<ROWS> {
         };
         Self {
             zone_identifier: context.get_identifier(format!("COND_{}_TEMP", zone_id)),
-            fwd_door_id: context.get_identifier(Self::FWD_DOOR.to_owned()),
-            rear_door_id: context.get_identifier(Self::REAR_DOOR.to_owned()),
             passenger_rows_id,
 
             zone_id,
             zone_air: ZoneAir::new(),
             zone_volume,
             passengers,
-            fwd_door_is_open: false,
-            rear_door_is_open: false,
         }
     }
 
@@ -73,7 +61,8 @@ impl<const ROWS: usize> CabinZone<ROWS> {
         context: &UpdateContext,
         duct_temperature: &impl DuctTemperature,
         pack_flow_per_cubic_meter: MassRate,
-        pressurization: &impl Cabin,
+        number_of_open_doors: u8,
+        cabin_pressure_simulation: &impl CabinPressure,
     ) {
         let mut air_in = Air::new();
         air_in.set_temperature(duct_temperature.duct_demand_temperature()[self.zone_id.id()]);
@@ -84,9 +73,8 @@ impl<const ROWS: usize> CabinZone<ROWS> {
             &air_in,
             self.zone_volume,
             self.passengers,
-            self.fwd_door_is_open,
-            self.rear_door_is_open,
-            pressurization,
+            number_of_open_doors,
+            cabin_pressure_simulation,
         );
     }
 
@@ -101,11 +89,6 @@ impl<const ROWS: usize> CabinZone<ROWS> {
 
 impl<const ROWS: usize> SimulationElement for CabinZone<ROWS> {
     fn read(&mut self, reader: &mut SimulatorReader) {
-        let rear_door_read: Ratio = reader.read(&self.rear_door_id);
-        self.rear_door_is_open = rear_door_read > Ratio::new::<percent>(0.);
-        let fwd_door_read: Ratio = reader.read(&self.fwd_door_id);
-        self.fwd_door_is_open = fwd_door_read > Ratio::new::<percent>(0.);
-
         let zone_passengers: u8 = if let Some(rows) = &self.passenger_rows_id {
             let mut zone_sum_passengers: u8 = 0;
             for r in rows.iter() {
@@ -158,9 +141,8 @@ impl ZoneAir {
         air_in: &Air,
         zone_volume: Volume,
         zone_passengers: u8,
-        fwd_door_is_open: bool,
-        rear_door_is_open: bool,
-        pressurization: &impl Cabin,
+        number_of_open_doors: u8,
+        cabin_pressure_simulation: &impl CabinPressure,
     ) {
         if !self.is_initialised {
             self.internal_air
@@ -168,8 +150,8 @@ impl ZoneAir {
             self.flow_out.set_temperature(context.ambient_temperature());
             self.is_initialised = true;
         }
-        self.internal_air.set_pressure(pressurization.pressure());
-        let number_of_open_doors: u8 = fwd_door_is_open as u8 + rear_door_is_open as u8;
+        self.internal_air
+            .set_pressure(cabin_pressure_simulation.cabin_pressure());
         let new_equilibrium_temperature = self.equilibrium_temperature_calculation(
             context,
             number_of_open_doors,
@@ -370,7 +352,7 @@ mod cabin_air_tests {
         },
     };
     use std::time::Duration;
-    use uom::si::{length::foot, thermodynamic_temperature::degree_celsius};
+    use uom::si::thermodynamic_temperature::degree_celsius;
 
     struct TestAirConditioningSystem {
         duct_demand_temperature: ThermodynamicTemperature,
@@ -425,12 +407,12 @@ mod cabin_air_tests {
         }
     }
 
-    impl Cabin for TestPressurization {
-        fn altitude(&self) -> Length {
-            Length::new::<foot>(0.)
+    impl CabinPressure for TestPressurization {
+        fn exterior_pressure(&self) -> Pressure {
+            Pressure::new::<pascal>(101315.)
         }
 
-        fn pressure(&self) -> Pressure {
+        fn cabin_pressure(&self) -> Pressure {
             self.cabin_pressure
         }
     }
@@ -439,6 +421,7 @@ mod cabin_air_tests {
         cabin_zone: CabinZone<2>,
         air_conditioning_system: TestAirConditioningSystem,
         pressurization: TestPressurization,
+        number_of_open_doors: u8,
     }
 
     impl TestAircraft {
@@ -453,6 +436,7 @@ mod cabin_air_tests {
                 ),
                 air_conditioning_system: TestAirConditioningSystem::new(),
                 pressurization: TestPressurization::new(),
+                number_of_open_doors: 0,
             }
         }
 
@@ -468,6 +452,10 @@ mod cabin_air_tests {
         fn set_passengers(&mut self, passengers: u8) {
             self.cabin_zone.update_number_of_passengers(passengers);
         }
+
+        fn open_number_of_doors(&mut self, number_of_doors: u8) {
+            self.number_of_open_doors = number_of_doors;
+        }
     }
     impl Aircraft for TestAircraft {
         fn update_after_power_distribution(&mut self, context: &UpdateContext) {
@@ -481,6 +469,7 @@ mod cabin_air_tests {
                 context,
                 &self.air_conditioning_system,
                 flow_rate_per_cubic_meter,
+                self.number_of_open_doors,
                 &self.pressurization,
             );
         }
@@ -560,7 +549,7 @@ mod cabin_air_tests {
         }
 
         fn command_open_door(mut self) -> Self {
-            self.write_by_name("INTERACTIVE POINT OPEN:0", Ratio::new::<percent>(100.));
+            self.command(|a| a.open_number_of_doors(1));
             self
         }
 

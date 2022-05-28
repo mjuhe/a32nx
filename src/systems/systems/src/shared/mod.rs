@@ -110,9 +110,11 @@ pub trait EngineUncorrectedN2 {
     fn uncorrected_n2(&self) -> Ratio;
 }
 
-pub trait Cabin {
+pub trait CabinPressurization {
     fn altitude(&self) -> Length;
-    fn pressure(&self) -> Pressure;
+    fn outflow_valve_open_amount(&self) -> Ratio;
+    fn safety_valve_open_amount(&self) -> Ratio;
+    fn should_open_outflow_valve(&self) -> bool;
 }
 
 pub trait CabinTemperature {

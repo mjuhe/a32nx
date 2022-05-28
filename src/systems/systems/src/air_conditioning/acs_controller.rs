@@ -1,9 +1,9 @@
 use crate::{
     pneumatic::{EngineModeSelector, EngineState},
     shared::{
-        pid::PidController, Cabin, ControllerSignal, EngineBleedPushbutton, EngineCorrectedN1,
-        EngineFirePushButtons, EngineStartState, GroundSpeed, LgciuWeightOnWheels, PneumaticBleed,
-        PressurizationOverheadShared,
+        pid::PidController, CabinPressurization, ControllerSignal, EngineBleedPushbutton,
+        EngineCorrectedN1, EngineFirePushButtons, EngineStartState, GroundSpeed,
+        LgciuWeightOnWheels, PneumaticBleed, PressurizationOverheadShared,
     },
     simulation::{
         InitContext, Read, SimulationElement, SimulationElementVisitor, SimulatorReader,
@@ -56,7 +56,7 @@ impl<const ZONES: usize> AirConditioningSystemController<ZONES> {
         engine_fire_push_buttons: &impl EngineFirePushButtons,
         pneumatic: &(impl PneumaticBleed + EngineStartState),
         pneumatic_overhead: &impl EngineBleedPushbutton,
-        pressurization: &impl Cabin,
+        pressurization: &impl CabinPressurization,
         pressurization_overhead: &impl PressurizationOverheadShared,
         lgciu: [&impl LgciuWeightOnWheels; 2],
     ) {
@@ -415,7 +415,7 @@ impl<const ZONES: usize> ZoneController<ZONES> {
         context: &UpdateContext,
         acs_overhead: &AirConditioningSystemOverhead<ZONES>,
         pack_flow: &impl PackFlow,
-        pressurization: &impl Cabin,
+        pressurization: &impl CabinPressurization,
     ) {
         self.zone_selected_temperature = acs_overhead.selected_cabin_temperature(self.zone_id);
         self.duct_demand_temperature =
@@ -433,7 +433,7 @@ impl<const ZONES: usize> ZoneController<ZONES> {
     fn calculate_duct_temp_demand(
         &mut self,
         context: &UpdateContext,
-        pressurization: &impl Cabin,
+        pressurization: &impl CabinPressurization,
     ) -> ThermodynamicTemperature {
         let altitude_correction: f64 =
             pressurization.altitude().get::<foot>() * Self::K_ALTITUDE_CORRECTION_DEG_PER_FEET;
@@ -582,7 +582,7 @@ impl<const ZONES: usize> PackFlowController<ZONES> {
         engine_fire_push_buttons: &impl EngineFirePushButtons,
         pneumatic: &(impl PneumaticBleed + EngineStartState),
         pneumatic_overhead: &impl EngineBleedPushbutton,
-        pressurization: &impl Cabin,
+        pressurization: &impl CabinPressurization,
         pressurization_overhead: &impl PressurizationOverheadShared,
         pack_flow_valve: &[PackFlowValve; 2],
     ) {
@@ -649,7 +649,7 @@ impl<const ZONES: usize> PackFlowController<ZONES> {
 
     // This calculates the flow based on the demand, when the packs are modelled this needs to be changed
     // so the demand actuates the valve, and then the flow is calculated based on that
-    fn absolute_flow_calculation(&self, pressurization: &impl Cabin) -> MassRate {
+    fn absolute_flow_calculation(&self, pressurization: &impl CabinPressurization) -> MassRate {
         let absolute_flow = self.flow_demand.get::<ratio>()
             * (Self::FLOW_CONSTANT_XCAB * pressurization.altitude().get::<foot>()
                 + Self::FLOW_CONSTANT_C);
@@ -716,7 +716,7 @@ impl<const ZONES: usize> PackFlowController<ZONES> {
     fn pack_flow_calculation(
         &self,
         pack_flow_valve: &[PackFlowValve; 2],
-        pressurization: &impl Cabin,
+        pressurization: &impl CabinPressurization,
     ) -> MassRate {
         let absolute_flow: MassRate = self.absolute_flow_calculation(pressurization);
         if pack_flow_valve.iter().any(|fcv| fcv.fcv_is_open()) {
@@ -777,6 +777,7 @@ mod acs_controller_tests {
             ValueKnob,
         },
         pneumatic::{valve::DefaultValve, EngineModeSelector},
+        pressurization::{cabin_pressure_simulation::CabinPressureSimulation, CabinPressure},
         shared::PneumaticValve,
         simulation::{
             test::{ReadByName, SimulationTestBed, TestBed, WriteByName},
@@ -784,7 +785,7 @@ mod acs_controller_tests {
         },
     };
     use uom::si::{
-        length::foot, pressure::hectopascal, thermodynamic_temperature::degree_celsius,
+        area::square_meter, length::foot, thermodynamic_temperature::degree_celsius,
         velocity::knot, volume::cubic_meter,
     };
 
@@ -841,13 +842,21 @@ mod acs_controller_tests {
             self.cabin_altitude = altitude;
         }
     }
-    impl Cabin for TestPressurization {
+    impl CabinPressurization for TestPressurization {
         fn altitude(&self) -> Length {
             self.cabin_altitude
         }
 
-        fn pressure(&self) -> Pressure {
-            Pressure::new::<hectopascal>(1013.15)
+        fn outflow_valve_open_amount(&self) -> Ratio {
+            Ratio::new::<percent>(0.)
+        }
+
+        fn safety_valve_open_amount(&self) -> Ratio {
+            Ratio::new::<percent>(0.)
+        }
+
+        fn should_open_outflow_valve(&self) -> bool {
+            false
         }
     }
 
@@ -1088,6 +1097,7 @@ mod acs_controller_tests {
     struct TestCabin {
         cockpit: CabinZone<2>,
         passenger_cabin: CabinZone<2>,
+        cabin_pressure_simulation: CabinPressureSimulation,
     }
 
     impl TestCabin {
@@ -1107,6 +1117,13 @@ mod acs_controller_tests {
                     0,
                     Some([(1, 6), (7, 13)]),
                 ),
+                cabin_pressure_simulation: CabinPressureSimulation::new(
+                    context,
+                    Volume::new::<cubic_meter>(210.),
+                    Area::new::<square_meter>(0.0003),
+                    Area::new::<square_meter>(0.03),
+                    Area::new::<square_meter>(0.02),
+                ),
             }
         }
 
@@ -1115,7 +1132,6 @@ mod acs_controller_tests {
             context: &UpdateContext,
             duct_temperature: &impl DuctTemperature,
             pack_flow: &impl PackFlow,
-            pressurization: &impl Cabin,
         ) {
             let flow_rate_per_cubic_meter: MassRate = MassRate::new::<kilogram_per_second>(
                 pack_flow.pack_flow().get::<kilogram_per_second>() / (460.),
@@ -1124,19 +1140,31 @@ mod acs_controller_tests {
                 context,
                 duct_temperature,
                 flow_rate_per_cubic_meter,
-                pressurization,
+                0,
+                &self.cabin_pressure_simulation,
             );
             self.passenger_cabin.update(
                 context,
                 duct_temperature,
                 flow_rate_per_cubic_meter,
-                pressurization,
+                0,
+                &self.cabin_pressure_simulation,
             );
         }
 
         fn update_number_of_passengers(&mut self, number_of_passengers: u8) {
             self.passenger_cabin
                 .update_number_of_passengers(number_of_passengers);
+        }
+    }
+
+    impl CabinPressure for TestCabin {
+        fn exterior_pressure(&self) -> Pressure {
+            self.cabin_pressure_simulation.exterior_pressure()
+        }
+
+        fn cabin_pressure(&self) -> Pressure {
+            self.cabin_pressure_simulation.cabin_pressure()
         }
     }
 
@@ -1235,8 +1263,7 @@ mod acs_controller_tests {
                 &self.pressurization_overhead,
                 [&self.lgciu1, &self.lgciu2],
             );
-            self.test_cabin
-                .update(context, &self.acsc, &self.acsc, &self.pressurization);
+            self.test_cabin.update(context, &self.acsc, &self.acsc);
             for fcv in self.pack_flow_valve.iter_mut() {
                 fcv.update(context, &self.acsc);
             }

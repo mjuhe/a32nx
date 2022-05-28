@@ -3,8 +3,8 @@ use self::acs_controller::{AirConditioningSystemController, PackFlowValveSignal}
 use crate::{
     overhead::{OnOffFaultPushButton, ValueKnob},
     shared::{
-        Cabin, ControllerSignal, EngineBleedPushbutton, EngineCorrectedN1, EngineFirePushButtons,
-        EngineStartState, GroundSpeed, LgciuWeightOnWheels, PneumaticBleed,
+        CabinPressurization, ControllerSignal, EngineBleedPushbutton, EngineCorrectedN1,
+        EngineFirePushButtons, EngineStartState, GroundSpeed, LgciuWeightOnWheels, PneumaticBleed,
         PressurizationOverheadShared,
     },
     simulation::{
@@ -88,7 +88,7 @@ impl<const ZONES: usize> AirConditioningSystem<ZONES> {
         engine_fire_push_buttons: &impl EngineFirePushButtons,
         pneumatic: &(impl PneumaticBleed + EngineStartState),
         pneumatic_overhead: &impl EngineBleedPushbutton,
-        pressurization: &impl Cabin,
+        pressurization: &impl CabinPressurization,
         pressurization_overhead: &impl PressurizationOverheadShared,
         lgciu: [&impl LgciuWeightOnWheels; 2],
     ) {

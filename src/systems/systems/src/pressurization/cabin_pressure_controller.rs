@@ -7,8 +7,7 @@ use crate::{
 };
 
 use super::{
-    CabinPressure, CabinPressureSimulation, OutflowValveActuator, PressureValve,
-    PressureValveSignal,
+    CabinFlowProperties, CabinPressure, OutflowValveActuator, PressureValve, PressureValveSignal,
 };
 
 use std::time::Duration;
@@ -124,15 +123,14 @@ impl CabinPressureController {
         engines: [&impl EngineCorrectedN1; 2],
         lgciu_gears_compressed: bool,
         press_overhead: &impl PressurizationOverheadShared,
-        cabin_simulation: &impl CabinPressure,
         outflow_valve: &PressureValve,
         safety_valve: &PressureValve,
-        cabin_temperature: &impl CabinTemperature,
+        cabin_simulation: &(impl CabinPressure + CabinTemperature),
     ) {
         self.exterior_pressure = cabin_simulation.exterior_pressure();
         self.exterior_vertical_speed = context.vertical_speed();
         self.cabin_pressure = cabin_simulation.cabin_pressure();
-        self.cabin_temperature = cabin_temperature.cabin_temperature();
+        self.cabin_temperature = cabin_simulation.cabin_temperature();
 
         if !press_overhead.ldg_elev_is_auto() {
             self.landing_elevation = Length::new::<foot>(press_overhead.ldg_elev_knob_value())
@@ -354,7 +352,7 @@ impl OutflowValveActuator for CabinPressureController {
     fn target_valve_position(
         &self,
         press_overhead: &impl PressurizationOverheadShared,
-        cabin_pressure_simulation: &CabinPressureSimulation,
+        cabin_simulation: &impl CabinFlowProperties,
     ) -> Ratio {
         // Calculation extracted from:
         // F. Y. Kurokawa, C. Regina de Andrade and E. L. Zaparoli
@@ -367,20 +365,19 @@ impl OutflowValveActuator for CabinPressureController {
             / (CabinPressureController::R * self.cabin_temperature.get::<kelvin>());
 
         // Outflow valve target open area
-        let ofv_area = (cabin_pressure_simulation.cabin_flow_properties()[0]
-            .get::<kilogram_per_second>()
-            - cabin_pressure_simulation.cabin_flow_properties()[1].get::<kilogram_per_second>()
+        let ofv_area = (cabin_simulation.cabin_flow()[0].get::<kilogram_per_second>()
+            - cabin_simulation.cabin_flow()[1].get::<kilogram_per_second>()
             + ((cabin_air_density
                 * CabinPressureController::G
                 * self.cabin_volume.get::<cubic_meter>())
                 / (CabinPressureController::R * self.cabin_temperature.get::<kelvin>()))
                 * self.cabin_target_vs.get::<meter_per_second>())
-            / (cabin_pressure_simulation.flow_coefficient()
+            / (cabin_simulation.flow_coefficient()
                 * ((2.
                     * (CabinPressureController::GAMMA / (CabinPressureController::GAMMA - 1.))
                     * cabin_air_density
                     * self.cabin_pressure.get::<pascal>()
-                    * cabin_pressure_simulation.z_coefficient())
+                    * cabin_simulation.z_coefficient())
                 .abs())
                 .sqrt());
 
@@ -794,6 +791,7 @@ mod tests {
     use crate::simulation::{Aircraft, InitContext, SimulationElement, SimulationElementVisitor};
     use crate::{
         overhead::{AutoManFaultPushButton, NormalOnPushButton, SpringLoadedSwitch, ValueKnob},
+        pressurization::cabin_pressure_simulation::CabinPressureSimulation,
         shared::{EngineCorrectedN1, LgciuWeightOnWheels},
         simulation::{
             test::{SimulationTestBed, TestBed},
@@ -937,12 +935,20 @@ mod tests {
 
     struct TestCabin {
         cabin_temperature: ThermodynamicTemperature,
+        cabin_pressure_simulation: CabinPressureSimulation,
     }
 
     impl TestCabin {
-        fn new() -> Self {
+        fn new(context: &mut InitContext) -> Self {
             Self {
                 cabin_temperature: ThermodynamicTemperature::new::<kelvin>(297.15),
+                cabin_pressure_simulation: CabinPressureSimulation::new(
+                    context,
+                    Volume::new::<cubic_meter>(210.),
+                    Area::new::<square_meter>(0.0003),
+                    Area::new::<square_meter>(0.03),
+                    Area::new::<square_meter>(0.02),
+                ),
             }
         }
     }
@@ -953,10 +959,19 @@ mod tests {
         }
     }
 
+    impl CabinPressure for TestCabin {
+        fn exterior_pressure(&self) -> Pressure {
+            self.cabin_pressure_simulation.exterior_pressure()
+        }
+
+        fn cabin_pressure(&self) -> Pressure {
+            self.cabin_pressure_simulation.cabin_pressure()
+        }
+    }
+
     struct TestAircraft {
         cpc: CabinPressureController,
-        cabin_simulation: CabinPressureSimulation,
-        cabin_temperature: TestCabin,
+        cabin_simulation: TestCabin,
         outflow_valve: PressureValve,
         safety_valve: PressureValve,
         press_overhead: TestPressurizationOverheadPanel,
@@ -973,14 +988,7 @@ mod tests {
                     Volume::new::<cubic_meter>(210.),
                     Area::new::<square_meter>(0.03),
                 ),
-                cabin_simulation: CabinPressureSimulation::new(
-                    context,
-                    Volume::new::<cubic_meter>(210.),
-                    Area::new::<square_meter>(0.0003),
-                    Area::new::<square_meter>(0.03),
-                    Area::new::<square_meter>(0.02),
-                ),
-                cabin_temperature: TestCabin::new(),
+                cabin_simulation: TestCabin::new(context),
                 outflow_valve: PressureValve::new_outflow_valve(),
                 safety_valve: PressureValve::new_safety_valve(),
                 press_overhead: TestPressurizationOverheadPanel::new(context),
@@ -1056,10 +1064,9 @@ mod tests {
                 [&self.engine_1, &self.engine_2],
                 lgciu_gears_compressed,
                 &self.press_overhead,
-                &self.cabin_simulation,
                 &self.outflow_valve,
                 &self.safety_valve,
-                &self.cabin_temperature,
+                &self.cabin_simulation,
             );
         }
     }
