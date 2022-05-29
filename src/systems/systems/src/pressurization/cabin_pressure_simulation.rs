@@ -48,6 +48,10 @@ pub struct CabinPressureSimulation {
 }
 
 impl CabinPressureSimulation {
+    const DOOR_OPEN_AREA_METER: f64 = 1.5; // m2
+    const MAX_DECOMPRESSION_RATE: f64 = 200.; // m/s
+    const MAX_COMPRESSION_RATE: f64 = -50.; // m/s
+
     // Atmospheric constants
     const R: f64 = 287.058; // Specific gas constant for air - m2/s2/K
     const GAMMA: f64 = 1.4; // Rate of specific heats for air
@@ -96,6 +100,7 @@ impl CabinPressureSimulation {
         pack_flow: &impl PackFlow,
         lgciu_gear_compressed: bool,
         cabin_temperature: ThermodynamicTemperature,
+        number_of_open_doors: u8,
     ) {
         if !self.initialized {
             self.cabin_pressure = self.initialize_cabin_pressure(context, lgciu_gear_compressed);
@@ -112,9 +117,10 @@ impl CabinPressureSimulation {
         self.outflow_valve_open_amount = pressurization.outflow_valve_open_amount();
         self.safety_valve_open_amount = pressurization.safety_valve_open_amount();
         self.cabin_flow_in = pack_flow.pack_flow();
-        self.cabin_flow_out = self.calculate_cabin_flow_out();
+        self.cabin_flow_out = self.calculate_cabin_flow_out(number_of_open_doors);
         self.cabin_vs = self.calculate_cabin_vs(cabin_temperature);
         self.cabin_pressure = self.calculate_cabin_pressure(context, cabin_temperature);
+        println!("Cabin pressure: {}", self.cabin_pressure.get::<hectopascal>());
         self.cabin_previous_temperature = cabin_temperature;
     }
 
@@ -165,24 +171,20 @@ impl CabinPressureSimulation {
         let pressure_ratio = (self.exterior_pressure / self.cabin_pressure).get::<ratio>();
 
         // Empirical smooth formula to avoid singularity at at delta P = 0
-        let mut margin: f64 = -1.205e-4
-            * (self.cabin_volume.get::<cubic_meter>() / 400.)
-            * self.exterior_pressure.get::<hectopascal>()
-            + 0.124108 * (self.cabin_volume.get::<cubic_meter>() / 400.);
-        let slope: f64 = -5000. * margin + 510.;
+        let mut margin: f64 = -1.205e-4 * self.exterior_pressure.get::<hectopascal>() + 0.124108;
+        let slope: f64 = 1. / margin;
+        println!("Pressure ratio: {}", pressure_ratio);
         if should_open_outflow_valve {
             margin = 0.1;
             if (pressure_ratio - 1.).abs() < margin {
-                -5e2 * (self.cabin_volume.get::<cubic_meter>() / 400.) * pressure_ratio
-                    + 5e2 * (self.cabin_volume.get::<cubic_meter>() / 400.)
+                1.25 * self.cabin_volume.get::<cubic_meter>() * (1. - pressure_ratio)
             } else if (pressure_ratio - 1.) > 0. {
-                -50. * (self.cabin_volume.get::<cubic_meter>() / 400.)
+                -0.125 * self.cabin_volume.get::<cubic_meter>()
             } else {
-                50. * (self.cabin_volume.get::<cubic_meter>() / 400.)
+                0.125 * self.cabin_volume.get::<cubic_meter>()
             }
         } else if (pressure_ratio - 1.).abs() < margin {
-            -slope * pressure_ratio * (self.cabin_volume.get::<cubic_meter>() / 400.)
-                + slope * (self.cabin_volume.get::<cubic_meter>() / 400.)
+            -slope * pressure_ratio + slope
         } else if (pressure_ratio - 1.) > 0. {
             -1.
         } else {
@@ -190,26 +192,36 @@ impl CabinPressureSimulation {
         }
     }
 
-    fn calculate_cabin_flow_out(&self) -> MassRate {
+    fn calculate_cabin_flow_out(&self, number_of_open_doors: u8) -> MassRate {
         let area_leakage = self.cabin_leakage_area
             + self.safety_valve_size * self.safety_valve_open_amount.get::<ratio>();
+        let open_door_area = number_of_open_doors as f64 * Self::DOOR_OPEN_AREA_METER;
         let outflow_valve_area =
             self.outflow_valve_open_amount.get::<ratio>() * self.outflow_valve_size;
         MassRate::new::<kilogram_per_second>(
             self.flow_coefficient
-                * (area_leakage.get::<square_meter>() + outflow_valve_area.get::<square_meter>())
+                * (area_leakage.get::<square_meter>()
+                    + outflow_valve_area.get::<square_meter>()
+                    + open_door_area)
                 * self.base_airflow_calculation(),
         )
     }
 
     fn calculate_cabin_vs(&self, cabin_temperature: ThermodynamicTemperature) -> Velocity {
+        println!("Flow out: {}", self.cabin_flow_out.get::<kilogram_per_second>());
         let vertical_speed = (self.cabin_flow_out.get::<kilogram_per_second>()
             - self.cabin_flow_in.get::<kilogram_per_second>())
             / ((self.cabin_air_density.get::<kilogram_per_cubic_meter>()
                 * Self::G
                 * self.cabin_volume.get::<cubic_meter>())
                 / (Self::R * cabin_temperature.get::<kelvin>()));
-        Velocity::new::<meter_per_second>(vertical_speed)
+        if vertical_speed > Self::MAX_DECOMPRESSION_RATE {
+            Velocity::new::<meter_per_second>(Self::MAX_DECOMPRESSION_RATE)
+        } else if vertical_speed < Self::MAX_COMPRESSION_RATE {
+            Velocity::new::<meter_per_second>(Self::MAX_COMPRESSION_RATE)
+        } else {
+            Velocity::new::<meter_per_second>(vertical_speed)
+        }
     }
 
     fn calculate_cabin_pressure(
@@ -218,19 +230,32 @@ impl CabinPressureSimulation {
         cabin_temperature: ThermodynamicTemperature,
     ) -> Pressure {
         // Convert cabin V/S to pressure/delta
+        println!("Cabin temp: {}, cabin density: {}, cabin vs: {}", cabin_temperature.get::<kelvin>(), self.cabin_air_density.get::<kilogram_per_cubic_meter>(), self.cabin_vs.get::<meter_per_second>());
         let pressure_difference_temperature = Pressure::new::<pascal>(
             self.cabin_air_density.get::<kilogram_per_cubic_meter>()
                 * Self::R
                 * (cabin_temperature.get::<kelvin>()
                     - self.cabin_previous_temperature.get::<kelvin>()),
         );
-        self.cabin_pressure
+        let new_cabin_pressure = self.cabin_pressure
             * (1.
                 - 2.25577e-5_f64
                     * self.cabin_vs.get::<meter_per_second>()
                     * context.delta_as_secs_f64())
             .powf(5.2559)
-            + pressure_difference_temperature
+            + pressure_difference_temperature;
+
+        // To avoid overshooting pressure and creating instability
+        // if (self.cabin_pressure > self.exterior_pressure
+        //     && new_cabin_pressure < self.exterior_pressure)
+        //     || (self.cabin_pressure < self.exterior_pressure
+        //         && new_cabin_pressure > self.exterior_pressure)
+        // {
+        //     self.exterior_pressure
+        // } else {
+        //     new_cabin_pressure
+        // }
+        new_cabin_pressure
     }
 
     fn base_airflow_calculation(&self) -> f64 {

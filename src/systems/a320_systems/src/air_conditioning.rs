@@ -190,6 +190,7 @@ impl A320Cabin {
             pack_flow,
             lgciu_gears_compressed,
             self.cabin_temperature(),
+            number_of_open_doors,
         );
     }
 }
@@ -245,6 +246,7 @@ impl SimulationElement for A320Cabin {
 
     fn accept<T: SimulationElementVisitor>(&mut self, visitor: &mut T) {
         accept_iterable!(self.cabin_zone, visitor);
+        self.cabin_pressure_simulation.accept(visitor);
 
         visitor.visit(self);
     }
@@ -952,6 +954,11 @@ mod tests {
             self
         }
 
+        fn command_open_door(mut self) -> Self {
+            self.write_by_name("INTERACTIVE POINT OPEN:0", Ratio::new::<percent>(100.));
+            self
+        }
+
         fn command_on_ground(&mut self, on_ground: bool) {
             self.command(|a| a.set_on_ground(on_ground));
         }
@@ -1009,6 +1016,15 @@ mod tests {
                     .a320_cabin
                     .cabin_pressure_simulation
                     .cabin_pressure()
+            })
+        }
+
+        fn ambient_pressure(&self) -> Pressure {
+            self.query(|a| {
+                a.a320_cabin_air
+                    .a320_cabin
+                    .cabin_pressure_simulation
+                    .exterior_pressure()
             })
         }
 
@@ -1746,7 +1762,7 @@ mod tests {
             .and_run()
             .command_man_vs_switch_position(2)
             .command_packs_on_off(false)
-            .iterate(100)
+            .iterate(200)
             .memorize_cabin_pressure();
 
         assert!(
@@ -1776,6 +1792,7 @@ mod tests {
                 .abs()
                 < 1.
         );
+        println!("Initial pressure: {}, cabin pressure: {}", test_bed.initial_pressure().get::<hectopascal>(), test_bed.cabin_pressure().get::<hectopascal>());
         assert!(test_bed.cabin_pressure() > test_bed.initial_pressure());
     }
 
@@ -1817,5 +1834,48 @@ mod tests {
                 < 1.
         );
         assert!(test_bed.cabin_pressure() < test_bed.initial_pressure());
+    }
+
+    #[test]
+    fn opening_doors_on_ground_does_not_change_pressure() {
+        let test_bed = test_bed()
+            .iterate(20)
+            .memorize_cabin_pressure()
+            .then()
+            .command_open_door()
+            .iterate(20);
+
+        assert!(
+            (test_bed.cabin_pressure() - test_bed.initial_pressure()).abs()
+                < Pressure::new::<hectopascal>(10.)
+        );
+    }
+
+    #[test]
+    fn opening_doors_in_flight_depressurizes_cabin() {
+        let test_bed = test_bed()
+            .run_and()
+            .command_aircraft_climb(Length::new::<foot>(0.), Length::new::<foot>(10000.))
+            .memorize_cabin_pressure()
+            .then()
+            .command_open_door()
+            .iterate(20);
+
+        assert!(test_bed.cabin_pressure() < test_bed.initial_pressure());
+    }
+
+    #[test]
+    fn after_opening_doors_pressure_reaches_equilibrium() {
+        let test_bed = test_bed()
+            .run_and()
+            .command_aircraft_climb(Length::new::<foot>(0.), Length::new::<foot>(10000.))
+            .then()
+            .command_open_door()
+            .iterate_with_delta(300, Duration::from_millis(100));
+
+        assert!(
+            (test_bed.cabin_pressure() - test_bed.ambient_pressure()).abs()
+                < Pressure::new::<hectopascal>(10.)
+        );
     }
 }
