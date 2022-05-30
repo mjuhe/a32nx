@@ -20,7 +20,7 @@ pub trait CabinPressure {
 }
 
 pub trait CabinFlowProperties {
-    fn cabin_flow(&self) -> [MassRate; 2];
+    fn cabin_flow_out(&self) -> MassRate;
     fn flow_coefficient(&self) -> f64;
     fn z_coefficient(&self) -> f64;
 }

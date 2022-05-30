@@ -67,19 +67,20 @@ impl A320AirConditioning {
             pressurization_overhead,
             lgciu,
         );
-        self.a320_cabin.update(
-            context,
-            &self.a320_air_conditioning_system,
-            &self.a320_air_conditioning_system,
-            &self.a320_pressurization_system,
-            lgciu,
-        );
         self.a320_pressurization_system.update(
             context,
             pressurization_overhead,
             engines,
             lgciu,
             &self.a320_cabin,
+            &self.a320_air_conditioning_system,
+        );
+        self.a320_cabin.update(
+            context,
+            &self.a320_air_conditioning_system,
+            &self.a320_air_conditioning_system,
+            &self.a320_pressurization_system,
+            lgciu,
         );
     }
 }
@@ -109,7 +110,7 @@ impl A320Cabin {
     // TODO: Improve volume according to specs
     const A320_CABIN_VOLUME_CUBIC_METER: f64 = 200.; // m3
     const A320_COCKPIT_VOLUME_CUBIC_METER: f64 = 10.; // m3
-    const A320_CABIN_LEAKAGE_AREA: f64 = 0.0003; // m2
+    const A320_CABIN_LEAKAGE_AREA: f64 = 0.0001; // m2
     const A320_OUTFLOW_VALVE_SIZE: f64 = 0.03; // m2
     const A320_SAFETY_VALVE_SIZE: f64 = 0.02; //m2
     const FWD_DOOR: &'static str = "INTERACTIVE POINT OPEN:0";
@@ -223,8 +224,8 @@ impl CabinPressure for A320Cabin {
 }
 
 impl CabinFlowProperties for A320Cabin {
-    fn cabin_flow(&self) -> [MassRate; 2] {
-        self.cabin_pressure_simulation.cabin_flow()
+    fn cabin_flow_out(&self) -> MassRate {
+        self.cabin_pressure_simulation.cabin_flow_out()
     }
 
     fn flow_coefficient(&self) -> f64 {
@@ -307,6 +308,7 @@ impl A320PressurizationSystem {
         engines: [&impl EngineCorrectedN1; 2],
         lgciu: [&impl LgciuWeightOnWheels; 2],
         cabin_simulation: &(impl CabinFlowProperties + CabinPressure + CabinTemperature),
+        pack_flow: &impl PackFlow,
     ) {
         self.is_in_man_mode = press_overhead.is_in_man_mode();
         let lgciu_gears_compressed = lgciu
@@ -322,6 +324,7 @@ impl A320PressurizationSystem {
                 &self.outflow_valve[0],
                 &self.safety_valve,
                 cabin_simulation,
+                pack_flow,
             );
         }
 
@@ -1448,7 +1451,7 @@ mod tests {
     fn cabin_delta_p_does_not_exceed_0_1_during_takeoff() {
         let test_bed = test_bed()
             .on_ground()
-            .iterate(20)
+            .iterate(50)
             .set_takeoff_power()
             .iterate(100);
 
@@ -1759,10 +1762,9 @@ mod tests {
     fn increasing_cabin_temperature_increases_pressure() {
         let mut test_bed = test_bed()
             .command_mode_sel_pb_man()
-            .and_run()
             .command_man_vs_switch_position(2)
             .command_packs_on_off(false)
-            .iterate(200)
+            .iterate(100)
             .memorize_cabin_pressure();
 
         assert!(
@@ -1792,7 +1794,6 @@ mod tests {
                 .abs()
                 < 1.
         );
-        println!("Initial pressure: {}, cabin pressure: {}", test_bed.initial_pressure().get::<hectopascal>(), test_bed.cabin_pressure().get::<hectopascal>());
         assert!(test_bed.cabin_pressure() > test_bed.initial_pressure());
     }
 
@@ -1800,7 +1801,6 @@ mod tests {
     fn reducing_cabin_temperature_reduces_pressure() {
         let mut test_bed = test_bed()
             .command_mode_sel_pb_man()
-            .and_run()
             .command_man_vs_switch_position(2)
             .command_packs_on_off(false)
             .iterate(100)

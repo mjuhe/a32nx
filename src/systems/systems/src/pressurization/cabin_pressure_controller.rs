@@ -1,4 +1,5 @@
 use crate::{
+    air_conditioning::PackFlow,
     shared::{CabinTemperature, ControllerSignal, EngineCorrectedN1, PressurizationOverheadShared},
     simulation::{
         InitContext, Read, SimulationElement, SimulatorReader, SimulatorWriter, UpdateContext,
@@ -57,6 +58,7 @@ pub struct CabinPressureController {
     cabin_volume: Volume,
     cabin_temperature: ThermodynamicTemperature,
     outflow_valve_size: Area,
+    cabin_flow_in: MassRate,
 }
 
 impl CabinPressureController {
@@ -114,6 +116,7 @@ impl CabinPressureController {
             cabin_volume,
             cabin_temperature: ThermodynamicTemperature::new::<kelvin>(297.15), // 24C
             outflow_valve_size,
+            cabin_flow_in: MassRate::new::<kilogram_per_second>(0.),
         }
     }
 
@@ -126,11 +129,13 @@ impl CabinPressureController {
         outflow_valve: &PressureValve,
         safety_valve: &PressureValve,
         cabin_simulation: &(impl CabinPressure + CabinTemperature),
+        pack_flow: &impl PackFlow,
     ) {
         self.exterior_pressure = cabin_simulation.exterior_pressure();
         self.exterior_vertical_speed = context.vertical_speed();
         self.cabin_pressure = cabin_simulation.cabin_pressure();
         self.cabin_temperature = cabin_simulation.cabin_temperature();
+        self.cabin_flow_in = pack_flow.pack_flow();
 
         if !press_overhead.ldg_elev_is_auto() {
             self.landing_elevation = Length::new::<foot>(press_overhead.ldg_elev_knob_value())
@@ -365,8 +370,10 @@ impl OutflowValveActuator for CabinPressureController {
             / (CabinPressureController::R * self.cabin_temperature.get::<kelvin>());
 
         // Outflow valve target open area
-        let ofv_area = (cabin_simulation.cabin_flow()[0].get::<kilogram_per_second>()
-            - cabin_simulation.cabin_flow()[1].get::<kilogram_per_second>()
+        let ofv_area = (self.cabin_flow_in.get::<kilogram_per_second>()
+            - cabin_simulation
+                .cabin_flow_out()
+                .get::<kilogram_per_second>()
             + ((cabin_air_density
                 * CabinPressureController::G
                 * self.cabin_volume.get::<cubic_meter>())
@@ -969,6 +976,22 @@ mod tests {
         }
     }
 
+    struct TestAirConditioning {
+        pack_flow: MassRate,
+    }
+    impl TestAirConditioning {
+        fn new() -> Self {
+            Self {
+                pack_flow: MassRate::new::<kilogram_per_second>(1.2),
+            }
+        }
+    }
+    impl PackFlow for TestAirConditioning {
+        fn pack_flow(&self) -> MassRate {
+            self.pack_flow
+        }
+    }
+
     struct TestAircraft {
         cpc: CabinPressureController,
         cabin_simulation: TestCabin,
@@ -979,6 +1002,7 @@ mod tests {
         engine_2: TestEngine,
         lgciu1: TestLgciu,
         lgciu2: TestLgciu,
+        pack_flow: TestAirConditioning,
     }
     impl TestAircraft {
         fn new(context: &mut InitContext) -> Self {
@@ -996,6 +1020,7 @@ mod tests {
                 engine_2: TestEngine::new(Ratio::new::<percent>(0.)),
                 lgciu1: TestLgciu::new(false),
                 lgciu2: TestLgciu::new(false),
+                pack_flow: TestAirConditioning::new(),
             };
             test_aircraft.cpc.outflow_valve_open_amount = Ratio::new::<percent>(50.);
             test_aircraft.set_engine_n1(Ratio::new::<percent>(30.));
@@ -1067,6 +1092,7 @@ mod tests {
                 &self.outflow_valve,
                 &self.safety_valve,
                 &self.cabin_simulation,
+                &self.pack_flow,
             );
         }
     }
