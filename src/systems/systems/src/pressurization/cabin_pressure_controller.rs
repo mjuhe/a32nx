@@ -128,13 +128,13 @@ impl<C: PressurizationConstants> CabinPressureController<C> {
         }
     }
 
-    pub fn update(
+    pub fn update<const OFV: usize>(
         &mut self,
         context: &UpdateContext,
         engines: [&impl EngineCorrectedN1; 2],
         lgciu_gears_compressed: bool,
         press_overhead: &impl PressurizationOverheadShared,
-        outflow_valve: &PressureValve,
+        outflow_valve: &[PressureValve; OFV],
         safety_valve: &PressureValve,
         cabin_simulation: &(impl CabinPressure + CabinTemperature),
         pack_flow: &impl PackFlow,
@@ -157,7 +157,12 @@ impl<C: PressurizationConstants> CabinPressureController<C> {
         self.cabin_target_vs = self.calculate_cabin_target_vs(context);
         self.cabin_alt = self.calculate_cabin_altitude();
 
-        self.outflow_valve_open_amount = outflow_valve.open_amount();
+        self.outflow_valve_open_amount = outflow_valve
+            .iter()
+            .map(|ofv| ofv.open_amount())
+            .sum::<Ratio>()
+            / outflow_valve.len() as f64;
+
         self.safety_valve_open_amount = safety_valve.open_amount();
 
         if self.is_in_man_mode && press_overhead.is_in_man_mode() {
@@ -1016,7 +1021,7 @@ mod tests {
     struct TestAircraft {
         cpc: CabinPressureController<TestConstants>,
         cabin_simulation: TestCabin,
-        outflow_valve: PressureValve,
+        outflow_valve: [PressureValve; 1],
         safety_valve: PressureValve,
         press_overhead: TestPressurizationOverheadPanel,
         engine_1: TestEngine,
@@ -1035,7 +1040,7 @@ mod tests {
                     TestConstants,
                 ),
                 cabin_simulation: TestCabin::new(context),
-                outflow_valve: PressureValve::new_outflow_valve(),
+                outflow_valve: [PressureValve::new_outflow_valve(); 1],
                 safety_valve: PressureValve::new_safety_valve(),
                 press_overhead: TestPressurizationOverheadPanel::new(context),
                 engine_1: TestEngine::new(Ratio::new::<percent>(0.)),

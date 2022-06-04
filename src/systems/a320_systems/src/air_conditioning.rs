@@ -323,7 +323,7 @@ impl A320PressurizationSystem {
                 engines,
                 lgciu_gears_compressed,
                 press_overhead,
-                &self.outflow_valve[0],
+                &self.outflow_valve,
                 &self.safety_valve,
                 cabin_simulation,
                 pack_flow,
