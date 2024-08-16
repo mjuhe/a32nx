@@ -74,6 +74,67 @@ impl Default for PurelyPneumaticValve {
     }
 }
 
+/// A valve that reduces the input pressure of a fluid to a desired value at its output. It's a mechanical valve that
+/// does not take any inputs.
+pub struct PressureRegulatingValve {
+    open_amount: Ratio,
+    connector: PneumaticContainerConnector,
+}
+impl PressureRegulatingValve {
+    const SPRING_CHARACTERISTIC: f64 = 1e-3;
+
+    pub fn new() -> Self {
+        Self {
+            open_amount: Ratio::new::<ratio>(0.),
+            connector: PneumaticContainerConnector::new(),
+        }
+    }
+
+    pub fn update_move_fluid(
+        &mut self,
+        context: &UpdateContext,
+        container_one: &mut impl PneumaticContainer,
+        container_two: &mut impl PneumaticContainer,
+        target_output_pressure: Pressure,
+    ) {
+        self.set_open_amount_from_pressure_difference(
+            target_output_pressure - container_two.pressure(),
+        );
+
+        self.connector
+            .with_transfer_speed_factor(self.open_amount)
+            .update_move_fluid(context, container_one, container_two);
+    }
+
+    fn set_open_amount_from_pressure_difference(&mut self, pressure_difference: Pressure) {
+        self.open_amount = Ratio::new::<ratio>(
+            2. / PI
+                * (pressure_difference.get::<psi>() * Self::SPRING_CHARACTERISTIC)
+                    .atan()
+                    .max(0.),
+        );
+        // println!("{}", self.open_amount.get::<ratio>());
+    }
+
+    pub fn fluid_flow(&self) -> MassRate {
+        self.connector.fluid_flow()
+    }
+
+    pub fn open_amount(&self) -> Ratio {
+        self.open_amount
+    }
+}
+impl PneumaticValve for PressureRegulatingValve {
+    fn is_open(&self) -> bool {
+        self.open_amount.get::<percent>() > 0.
+    }
+}
+impl Default for PressureRegulatingValve {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct PneumaticValveCharacteristics<const N: usize> {
     minimum_muscle_pressure: Pressure,
     downstream_pressure_breakpoints_psig: [f64; N],

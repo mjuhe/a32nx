@@ -9,6 +9,7 @@ mod fuel;
 pub mod hydraulic;
 mod icing;
 mod navigation;
+mod oxygen;
 mod payload;
 mod pneumatic;
 mod power_consumption;
