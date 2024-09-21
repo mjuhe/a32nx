@@ -30,14 +30,16 @@ module.exports = {
     instruments: [
         msfsAvionicsInstrument('Clock'),
         msfsAvionicsInstrument('EWD'),
+        msfsAvionicsInstrument('MFD'),
         msfsAvionicsInstrument('ND'),
         msfsAvionicsInstrument('PFD'),
         msfsAvionicsInstrument('RMP'),
 
         reactInstrument('BAT'),
         reactInstrument('EFB', ['/Pages/VCockpit/Instruments/Shared/Map/MapInstrument.html']),
-        reactInstrument('MFD'),
+        reactInstrument('ISISlegacy'),
         reactInstrument('OIT'),
+        reactInstrument('RTPI'),
         reactInstrument('SD'),
     ],
 };
@@ -51,7 +53,7 @@ function msfsAvionicsInstrument(name, folder = name) {
             templateId: `A380X_${name}`,
             mountElementId: `${name}_CONTENT`,
             fileName: name.toLowerCase(),
-            imports: ['/JS/dataStorage.js'],
+            imports: ['/JS/dataStorage.js', '/JS/fbw-a380x/A32NX_Util.js'],
         },
     };
 }

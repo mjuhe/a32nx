@@ -79,6 +79,8 @@ export interface PFDSimvars {
   metricAltToggle: boolean;
   tla1: number;
   tla2: number;
+  tla3: number;
+  tla4: number;
   landingElevation: number;
   tcasState: number;
   tcasCorrective: boolean;
@@ -89,6 +91,8 @@ export interface PFDSimvars {
   tcasFail: boolean;
   engOneRunning: boolean;
   engTwoRunning: boolean;
+  engThreeRunning: boolean;
+  engFourRunning: boolean;
   expediteMode: boolean;
   setHoldSpeed: boolean;
   trkFpaDeselectedTCAS: boolean;
@@ -241,6 +245,8 @@ export enum PFDVars {
   metricAltToggle = 'L:A32NX_METRIC_ALT_TOGGLE',
   tla1 = 'L:A32NX_AUTOTHRUST_TLA:1',
   tla2 = 'L:A32NX_AUTOTHRUST_TLA:2',
+  tla3 = 'L:A32NX_AUTOTHRUST_TLA:3',
+  tla4 = 'L:A32NX_AUTOTHRUST_TLA:4',
   tcasState = 'L:A32NX_TCAS_STATE',
   tcasCorrective = 'L:A32NX_TCAS_RA_CORRECTIVE',
   tcasRedZoneL = 'L:A32NX_TCAS_VSPEED_RED:1',
@@ -250,6 +256,8 @@ export enum PFDVars {
   tcasFail = 'L:A32NX_TCAS_FAULT',
   engOneRunning = 'GENERAL ENG COMBUSTION:1',
   engTwoRunning = 'GENERAL ENG COMBUSTION:2',
+  engThreeRunning = 'GENERAL ENG COMBUSTION:3',
+  engFourRunning = 'GENERAL ENG COMBUSTION:4',
   expediteMode = 'L:A32NX_FMA_EXPEDITE_MODE',
   setHoldSpeed = 'L:A32NX_PFD_MSG_SET_HOLD_SPEED',
   trkFpaDeselectedTCAS = 'L:A32NX_AUTOPILOT_TCAS_MESSAGE_TRK_FPA_DESELECTION',
@@ -264,14 +272,14 @@ export enum PFDVars {
   latAcc = 'ACCELERATION BODY X',
   crzAltMode = 'L:A32NX_FMA_CRUISE_ALT_MODE',
   tcasModeDisarmed = 'L:A32NX_AUTOPILOT_TCAS_MESSAGE_DISARM',
-  flexTemp = 'L:AIRLINER_TO_FLEX_TEMP',
+  flexTemp = 'L:A32NX_AIRLINER_TO_FLEX_TEMP',
   autoBrakeMode = 'L:A32NX_AUTOBRAKES_ARMED_MODE',
   autoBrakeActive = 'L:A32NX_AUTOBRAKES_ACTIVE',
   autoBrakeDecel = 'L:A32NX_AUTOBRAKES_DECEL_LIGHT',
   fpaRaw = 'L:A32NX_ADIRS_IR_1_FLIGHT_PATH_ANGLE',
   daRaw = 'L:A32NX_ADIRS_IR_1_DRIFT_ANGLE',
-  ls1Button = 'L:BTN_LS_1_FILTER_ACTIVE',
-  ls2Button = 'L:BTN_LS_2_FILTER_ACTIVE',
+  ls1Button = 'L:A380X_EFIS_L_LS_BUTTON_IS_ON',
+  ls2Button = 'L:A380X_EFIS_R_LS_BUTTON_IS_ON',
   xtk = 'L:A32NX_FG_CROSS_TRACK_ERROR',
   ldevLeft = 'L:A32NX_FMGC_L_LDEV_REQUEST',
   ldevRight = 'L:A32NX_FMGC_R_LDEV_REQUEST',
